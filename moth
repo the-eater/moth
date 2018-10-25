@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+
+usage() {
+    cat <<EOF
+Moth - sticky sticky
+
+moth bind <pci-slot> <kernel module>
+
+    Creates config to bind pci-slot exclusively to kernel module
+
+Credits:
+    eater <=@eater.me>
+
+EOF
+}
+
+main() {
+	if [ $# -lt 1 ] || [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+		usage;
+	fi
+
+	if [ "$1" == "bind" ]; then
+	    shift;
+	    main_bind "$@";
+	fi
+
+	if [ "$1" == "bind-to" ]; then
+	    shift;
+	    main_bind_to "$@";
+	fi
+}
+
+main_bind() {
+    if [ $# -lt 2 ]; then
+	echo 'Usage: moth bind <pci-slot> <kernel module>';
+	exit 1;
+    fi
+
+    PCI_SLOT="$1";
+    KERNEL_MODULE="$2"
+
+    UDEV_RULE="ACTION==\"add\", ENV{MODALIAS}==\"$(cat "/sys/bus/pci/devices/${PCI_SLOT}/modalias")\", ENV{PCI_SLOT_NAME}=\"${PCI_SLOT}\", RUN=\"/bin/moth bind-to ${PCI_SLOT} ${KERNEL_MODULE}\""
+
+    FILE_NAME="/etc/udev/rules.d/pci-$(sed 's:[^0-9]\+:-:g' <<< "${PCI_SLOT}").rules"
+
+    echo "${UDEV_RULE}" > "${FILE_NAME}";
+    echo "Written udev rule to ${FILE_NAME}:";
+    echo "    ${UDEV_RULE}";
+}
+
+main_bind_to() {
+    if [ $# -lt 2 ]; then
+	echo 'Usage: moth bind-to <pci-slot> <kernel module>';
+	exit 1;
+    fi
+
+    PCI_SLOT="$1";
+    KERNEL_MODULE="$2"
+
+    SYSFS_PATH="/sys/bus/pci/devices/${PCI_SLOT}"
+    SYSFS_MODULE="/sys/bus/pci/drivers/${KERNEL_MODULE}"
+
+    # Load kernel module for other devices, so they don't get bound to given module too
+    modprobe "$(cat "${SYSFS_PATH}/modalias")";
+    
+    [ -e "${SYSFS_MODULE}/${PCI_SLOT}" ] && exit;
+
+    if [ -d "${SYSFS_PATH}/driver" ]; then
+	echo "${PCI_SLOT}" >> "${SYSFS_PATH}/driver/unbind";
+    fi
+
+    DEVICE_ID="$(cut -c 3- < "${SYSFS_PATH}/vendor") $(cut -c 3- < "${SYSFS_PATH}/device")";
+    
+    echo "${DEVICE_ID}" > "${SYSFS_MODULE}/new_id"; 
+
+    if [ ! -e "${SYSFS_MODULE}/${PCI_SLOT}" ]; then
+	echo "${PCI_SLOT}" > "${SYSFS_MODULE}/bind";
+    fi
+    
+    echo "${DEVICE_ID}" > "${SYSFS_MODULE}/remove_id"; 
+
+}
+
+main "$@"
